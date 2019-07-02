@@ -164,7 +164,7 @@ the file tree from being leaked.  This location might have to be
 adjusted per locate(1) implementation.
 
 Step 4: systemd service to run `zfs load-key`
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 After all of this, we are almost done.  Just need one more piece of
 the puzzle, so that zfs can load the keys for datasets and
