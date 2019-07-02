@@ -1,0 +1,217 @@
+Boot-time unlocking of ZFS encrypted datasets
+=============================================
+
+Background and motivation
+-------------------------
+
+As of ZFS-on-Linux 0.8.0, native encryption is available and it can be
+a desirable feature.  On a basic level, it secures data in the case of
+computer or disk-drive theft, it ensures that your data won’t be
+recovered if the disk as a whole fails and you can’t erase it manually
+anymore.  It *will not* protect against any kind of attacks while the
+system is running.  Malware and such will be able to read any
+available encrypted dataset freely.  This is in common with all other
+disk encryption methods: it protects data at-rest, not in-flight.
+
+For the full technical details, see
+https://www.youtube.com/watch?v=frnLiXclAMo[Tom Caputi’s talk on ZFS
+native encryption].  The command set is different from the video (much
+earlier in its development), but it largely still holds.
+
+With all this in mind, I decided to move my home datasets over to
+being encrypted.  Trusting ZFS’s (current) default with
+`encryption=on` (which is the same as `aes-256-ccm`), I moved my
+entire `$HOME` dataset tree.  Non-raw zfs sends actually make it
+pretty easy to convert between encrypted and unencrypted, and that
+step is easy…
+
+Just the one thing: How will I unlock the datasets at boot time,
+mostly automatically, in a safe manner?
+
+There are three possibilities for this:
+
+1. A PAM module, with the dataset’s properties as
+`keyformat=passphrase` and `keylocation=prompt`.  This might be nice,
+but no such PAM module exists and I don’t have much interest in
+writing it.
+2. With `keyformat=passphrase` and `keylocation=prompt`, a special
+boot service that prompts for the passphrase.  This already exists for
+cryptsetup, the implementation of which seems to be built into systemd
+and possibly could be adapted for `zfs load-key`.  I made attempts to
+write one using `systemd-ask-passphrase`, but was unsuccessful, which
+leads to the last and actual implementation I ended up on…
+3. `keyformat=raw` and `keylocation=file://$PATH`, ZFS can
+automatically load the key from a 32-byte file of random data.  This
+needs to be preloaded and requires a secure location for this file
+itself (if the key is available unencrypted, all the time, your data
+may as well be unencrypted too).  On the plus side, as I mentioned in
+the last point, cryptsetup already has perfectly good support for
+boot-time unlocking and may be used to assist with this problem.
+
+The solution I use for myself is the third one.  The key file might be
+stored on a USB drive for temporary access when required, but I don’t
+have a desire to dedicate a USB drive for such a purpose.  I’d much
+rather have the system be pretty self-suficient, which means I’ll need
+a zvol encrypted with LUKS (_not ZFS’s encryption_), which gets
+unlocked with a passphrase, mounted, and `zfs load-key` works.
+
+Step 1: Make the zvol
+~~~~~~~~~~~~~~~~~~~~~
+
+LUKS actually has a surprisingly large header, I found, when my first
+attempt to make a 10M zvol failed as soon as I tried to luksFormat it.
+A larger zvol should not be a very big deal (I have a 4TB pool in my
+desktop), and I opted to create a 50M volume, then format it with
+cryptsetup.  For good measure, I fill up all the available space
+first, then do a mkfs:
+
+----
+# zfs create -V 50m rpool/keystore
+# cryptsetup luksFormat /dev/zvol/rpool/keystore
+(type YES and your passphrase)
+# cryptsetup open --type luks /dev/zvol/rpool/keystore keystore
+# cp /dev/zero /dev/mapper/keystore
+# mkfs.fat /dev/mapper/keystore
+----
+
+I choose FAT because it is a very simple file system, and with the
+right mount options, you never need to worry about a program
+accidentally creating insecure permissions.  This part can easily be
+adjusted to have an ext2 formatted volume or anything, if desired.
+
+Add the LUKS volume to `/etc/crypttab`, which should trigger systemd
+at boot time to prompt for the passphrase:
+
+----
+# echo 'keystore /dev/zvol/rpool/keystore none' >> /etc/crypttab
+----
+
+The third field is “password” and the value of “none” causes systemd
+to prompt for the password interactively.  This was not intuitive to
+me, but it is what it is.
+
+Add the volume to `/etc/fstab` and mount it.  Just for my own peace of
+mind, I keep it mounted read-only by default so no possibility of
+writes or corruption happens, so the mount command needs an extra
+option.
+
+----
+# mkdir /etc/keystore
+# echo '/dev/mapper/keystore /etc/keystore vfat dmask=077,fmask=177,ro 0 2' >> /etc/fstab
+# mount -o rw /etc/keystore
+----
+
+Step 2: Generate keys
+~~~~~~~~~~~~~~~~~~~~~
+
+This is pretty straight-forward, ZFS only needs files 32 bytes of
+length of random data for its key (when `keyformat=raw`).  This may be
+accomplished as simply as this:
+
+----
+# dd if=/dev/urandom of=/etc/keystore/home-user.key
+----
+
+The file name is arbitrary and may be whatever you like.  I generally
+like the form of `${DATASET}.key`.
+
+If you have locate(1) on your system, updatedb(8) can leak the entire
+directory tree of your datasets.  I feel this is undesirable, and I
+opt to make an encrypted dataset for its database so that it may still
+operate fully normally, but my file names are still safe from prying
+eyes.  An alternative is to exclude paths in `/etc/updatedb.conf`, but
+then the usefulness of the tool is gone for me.
+
+----
+# dd if=/dev/urandom of=/etc/keystore/var-lib-mlocate.key
+----
+
+Add as many files as needed.  There is no technical requirement that
+each encryptionroot needs to have a unique key, but it is a very good
+idea nonetheless.
+
+Step 3: Set appropriate dataset properties
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This could be done at `zfs create` time, or `zfs receive`, if planning
+ahead, but I didn’t.  Luckily, the actual key ZFS uses to encrypt
+datasets is not really user-visible and the file and/or passphrase is
+merely a way to unlock this hidden key.  This makes it pretty easy to
+modify the values after the fact, to change passphrase or file.  (LUKS
+actually works in the exact same way.)
+
+I’ll still document all the methods:
+
+From scratch:
+----
+# zfs create -o encryption=on -o keyformat=raw -o keylocation=file:///etc/keystore/home-user.key rpool/home/user
+----
+
+From a send stream (non-raw only, read the manpage!), adjust redirect
+or pipe accordingly:
+----
+# zfs receive -o encryption=on -o keyformat=raw -o keylocation=file:///etc/keystore/home-user.key rpool/home/user < /some/place/zfs-sendstream
+----
+
+After the fact, if you created it first with a passphrase and change
+to this method:
+----
+# zfs change-key -o keyformat=raw -o keylocation=file:///etc/keystore/home-user.key rpool/home/user
+----
+
+I also created a `rpool/var/lib/mlocate` dataset to protect against
+the file tree from being leaked.  This location might have to be
+adjusted per locate(1) implementation.
+
+Step 4: systemd service to run `zfs load-key`
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+After all of this, we are almost done.  Just need one more piece of
+the puzzle, so that zfs can load the keys for datasets and
+automatically mount them afterward.
+
+----
+# cat > /etc/systemd/system/zfs-load-key.service <<EOF
+[Unit]
+Description=Load encryption keys
+DefaultDependencies=false
+Before=zfs-mount.service
+After=zfs-import.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/zfs load-key -a
+
+[Install]
+WantedBy=zfs-mount.service
+EOF
+# systemctl enable zfs-load-key.service
+----
+
+This file can be adjusted as needed.  `zfs load-key -a` automatically
+tries to load the keys for all encrypted datasets, which works for my
+case (all keys are in `/etc/keystore`).
+
+Multiple `ExecStart` lines can be used, systemd starts them up one
+after another.  To be more selective, you could replace the line with
+something like:
+----
+ExecStart=/usr/bin/zfs load-key rpool/home/user
+ExecStart=/usr/bin/zfs load-key rpool/var/lib/mlocate
+----
+
+This could be useful if you have other datasets you want to more
+manually manage.
+
+Step 5: Profit!
+~~~~~~~~~~~~~~~
+
+At this point, everything _should_ be in place.  Upon rebooting,
+systemd will halt the boot to ask for the keystore passphrase, which
+resides on a LUKS-encrypted zvol.  It will mount the unlocked keystore
+at `/etc/keystore` and continue the boot process.
+`zfs-load-key.service` is specified to be run before
+`zfs-mount.service`, to load all the encryption keys, and finally the
+system continues booting per normal, with all datasets available to
+mount.
