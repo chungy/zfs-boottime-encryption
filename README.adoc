@@ -11,7 +11,8 @@ recovered if the disk as a whole fails and you can’t erase it manually
 anymore.  It *will not* protect against any kind of attacks while the
 system is running.  Malware and such will be able to read any
 available encrypted dataset freely.  This is in common with all other
-disk encryption methods: it protects data at-rest, not in-flight.
+disk encryption methods: it protects data at-rest, not in-use (where
+`zfs get keystatus` is `available`).
 
 For the full technical details, see
 https://www.youtube.com/watch?v=frnLiXclAMo[Tom Caputi’s talk on ZFS
