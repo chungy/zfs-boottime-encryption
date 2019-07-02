@@ -110,7 +110,7 @@ length of random data for its key (when `keyformat=raw`).  This may be
 accomplished as simply as this:
 
 ----
-# dd if=/dev/urandom of=/etc/keystore/home-user.key
+# dd if=/dev/urandom of=/etc/keystore/home-user.key bs=32 count=1
 ----
 
 The file name is arbitrary and may be whatever you like.  I generally
@@ -124,7 +124,7 @@ eyes.  An alternative is to exclude paths in `/etc/updatedb.conf`, but
 then the usefulness of the tool is gone for me.
 
 ----
-# dd if=/dev/urandom of=/etc/keystore/var-lib-mlocate.key
+# dd if=/dev/urandom of=/etc/keystore/var-lib-mlocate.key bs=32 count=1
 ----
 
 Add as many files as needed.  There is no technical requirement that
