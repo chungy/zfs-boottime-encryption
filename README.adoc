@@ -1,7 +1,7 @@
 Boot-time unlocking of ZFS encrypted datasets
 =============================================
 
-NOTE: _A disclaimer about the status of this document, as of January 2019:_
+NOTE: _A disclaimer about the status of this document, as of January 2020:_
 With ZoL version 0.8.1 and newer, systemd mount generators exist that
 can automatically take a passphase at boot time and largely obsolete
 this guide.  If you don’t want the datasets protected by a passphrase
