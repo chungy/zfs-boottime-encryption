@@ -28,10 +28,14 @@ earlier in its development), but it largely still holds.
 
 With all this in mind, I decided to move my home datasets over to
 being encrypted.  Trusting ZFS’s (current) default with
-`encryption=on` (which is the same as `aes-256-ccm`), I moved my
-entire `$HOME` dataset tree.  Non-raw zfs sends actually make it
-pretty easy to convert between encrypted and unencrypted, and that
-step is easy…
+`encryption=on` (which is the same as `aes-256-ccm`)footnote:[A
+default encryption value of `aes-256-ccm` holds true up to 0.8.3, but
+the default https://github.com/zfsonlinux/zfs/pull/9749[in a future
+release] (whether 0.8.4 or 2.0) is changing to `aes-256-gcm`.  It is
+recommended to use that now, and to convert ccm datasets to gcm if you
+have the time.], I moved my entire `$HOME` dataset tree.  Non-raw zfs
+sends actually make it pretty easy to convert between encrypted and
+unencrypted, and that step is easy…
 
 Just the one thing: How will I unlock the datasets at boot time,
 mostly automatically, in a safe manner?
@@ -152,13 +156,13 @@ I’ll still document all the methods:
 
 From scratch:
 ----
-# zfs create -o encryption=on -o keyformat=raw -o keylocation=file:///etc/keystore/home-user.key rpool/home/user
+# zfs create -o encryption=aes-256-gcm -o keyformat=raw -o keylocation=file:///etc/keystore/home-user.key rpool/home/user
 ----
 
 From a send stream (non-raw only, read the manpage!), adjust redirect
 or pipe accordingly:
 ----
-# zfs receive -o encryption=on -o keyformat=raw -o keylocation=file:///etc/keystore/home-user.key rpool/home/user < /some/place/zfs-sendstream
+# zfs receive -o encryption=aes-256-gcm -o keyformat=raw -o keylocation=file:///etc/keystore/home-user.key rpool/home/user < /some/place/zfs-sendstream
 ----
 
 After the fact, if you created it first with a passphrase and change
